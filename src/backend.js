@@ -73,7 +73,7 @@ function auth(req,res,next){
   }
 }
 
-app.get("/tweet",auth,logger,(res,req)=>{
+app.get("/dashboard",auth,logger,(req,res)=>{
   const foundUser = User.find(u=>u.username === req.username)
 
   if(foundUser){

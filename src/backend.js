@@ -1,136 +1,116 @@
 import dotenv from 'dotenv'
 dotenv.config()
 
+import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
-const JSON_SECRET_KEY = 'andbandkaDola'
 import express from 'express'
 import cors from 'cors'
+import mongoose from 'mongoose'
+
+import { Usermodel, Tweetmodel } from './db.js'
+import { auth } from './middlewares/auth.js'
+import { logger } from './middlewares/logger.js'
+
+const JSON_SECRET_KEY = process.env.JSON_SECRET_KEY
+const MONGODB_ID = process.env.MONGODB_ID
+
+mongoose.connect(MONGODB_ID, {
+  dbName: "tweet-database"
+})
 
 const app = express()
 app.use(express.json())
 app.use(cors())
 
-const User = []
-
-function logger(req,res,next){
-  console.log(req.method + "request logged")
-  next();
-}
-
-app.post("/signup",(req,res)=>{
-  const username = req.body.username
-  const password = req.body.password
-  const feed = []
-
-  const exisitingUser = User.find(u=>u.username===username)
-
-  if(exisitingUser){
-    return res.json({
-      msg:"Account pre-exist, please signin"
-    })
-  }
-
-  User.push({
-    username,
-    password,
-    feed
-  })
-  res.json({msg:"Signup successful"})
-})
-
-app.post("/signin",(req,res)=>{
-  const username=req.body.username
-  const password=req.body.password
-
-  const token = jwt.sign({username},JSON_SECRET_KEY)
-
-  const exisitingUser=User.find(u=>u.username===username && u.password===password)
-
-  if(exisitingUser){
-    return res.json({
-      msg:"Signin successful",
-      token
-    }) 
-  } else {
-    return res.json({msg:"User not found, Please signup"})
-  }
-})
-
-function auth(req,res,next){
-
-  let token = req.headers.authorization
-
-  if (!token){
-    return res.json({msg:"Token is missing"})
-  }
-
+app.post("/signup", async (req, res) => {
   try {
-    const decodedata = jwt.verify(token,JSON_SECRET_KEY)
-    req.username = decodedata.username
-    next()
+    const { username, password } = req.body
+    
+    const hashedpassword = await bcrypt.hash(password, 10)
+    
+    await Usermodel.create({
+      email: username,
+      password: hashedpassword
+    })
+    
+    res.json({ msg: "Signup successful" })
   } catch (error) {
-    res.json({msg:"Invalid token"})
+    res.status(500).json({msg:"Error while signup"})
   }
-}
+})
 
-app.get("/dashboard",auth,logger,(req,res)=>{
-  const foundUser = User.find(u=>u.username === req.username)
+app.post("/signin", async (req, res) => {
+  const { username, password } = req.body
 
-  if(foundUser){
-    return res.json({feed: foundUser.feed})
+  const user = await Usermodel.findOne({ email: username })
+
+  if (!user) return res.status(403).json({ msg: "Invalid Creds" })
+
+  const passwordMatch = await bcrypt.compare(password, user.password)
+
+  if (passwordMatch) {
+    const token = jwt.sign({ id: user._id.toString() }, JSON_SECRET_KEY)
+    res.json({ token })
   } else {
-    return res.json({msg:"User not found"})
+    res.status(403).json({ msg: "Invalid Creds" })
   }
-});
+})
 
-app.post('/addTweet',auth,logger,(req,res)=>{
-  const foundUser = User.find(u=>u.username===req.username)
+app.get("/dashboard", auth, logger, async (req, res) => {
+  const tweets = await Tweetmodel.find({ userId: req.id })
 
-  const {tweet,id,time} = req.body
+  if (tweets) {
+    return res.json({ tweet: tweets })
+  } else {
+    return res.json({ msg: "User not found" })
+  }
+})
 
-  if(foundUser){
-    foundUser.feed.push({
+app.post('/addTweet', auth, logger, async (req, res) => {
+  const { tweet, time } = req.body
+
+  const user = await Usermodel.findOne({ _id: req.id })
+
+  if (user) {
+    await Tweetmodel.create({
       tweet,
       time,
-      id
+      userId: req.id
     })
-    return res.json({msg:"Tweet added successfully"})
+    return res.json({ msg: "Tweet added successfully" })
   } else {
-    return res.json({msg:"User not found"})
+    return res.json({ msg: "User not found" })
   }
 })
 
-app.put("/updateTweet",auth,logger,(req,res)=>{
-  const foundUser = User.find(u=>u.username=== req.username)
+app.put("/updateTweet", auth, logger, async (req, res) => {
+  const { _id, tweet } = req.body
 
-  if(!foundUser) return res.json({msg:"User not found"})
+  const updated = await Tweetmodel.findOneAndUpdate(
+    { _id: _id, userId: req.id },
+    { tweet },
+    { new: true }
+  )
 
-  const {id, tweet} = req.body
+  if (!updated) return res.json({ msg: "Tweet not found or unauthorized" })
 
-  const updateTweet = foundUser.feed.find(u=>u.id === id)
-  if(!updateTweet) return res.json({msg:"tweet not found"})
-
-  updateTweet.tweet = tweet;
-
-  res.json({msg:"Tweet updated successfully"})
+  res.json({ msg: "Tweet updated successfully" })
 })
 
-app.delete('/deleteTweet',auth,logger,(req,res)=>{
-  const foundUser = User.find(u=>u.username === req.username)
+app.delete('/deleteTweet', auth, logger, async (req, res) => {
+  const { _id } = req.body
 
-  const {id} = req.body
+  const deleted = await Tweetmodel.findOneAndDelete({
+    _id: _id,
+    userId: req.id
+  })
 
-  if(!foundUser) return res.json({msg:"User not found"})
+  if (!deleted) return res.json({ msg: "Tweet not found or unauthorized" })
 
-  const remainingTweets = foundUser.feed.filter(u=>u.id !== id)
-
-  if(!remainingTweets) return res.json({msg:""})
-
-  foundUser.feed = remainingTweets
-  res.json({msg:'Tweet deleted successfully'})
+  res.json({ msg: 'Tweet deleted successfully' })
 })
 
-const PORT = process.env.PORT || 3000
+const PORT = process.env.PORT
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`)
 })

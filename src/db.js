@@ -11,14 +11,14 @@ const Users = new Schema({
 const Tweets = new Schema({
   userId: {
     type: Schema.Types.ObjectId,
-    ref: 'Users-data'
+    ref: 'usersdata'
   },
   tweet: String,
   time: String
 })
 
-const Usermodel = mongoose.model('UsersData', Users)
-const Tweetmodel = mongoose.model('TweetsData', Tweets)
+const Usermodel = mongoose.model('usersdata', Users)
+const Tweetmodel = mongoose.model('tweetsdata', Tweets)
 
 export { Usermodel, Tweetmodel }
 
